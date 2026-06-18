@@ -7,8 +7,15 @@
 //  returned by Okta.
 //
 //  Notes:
-//  - `Codable` so coordinators can persist it for the lifetime of the
-//    process if needed (NOT to UserDefaults — see CLAUDE.md).
+//  - `UserSession` is intentionally NOT `Codable`. The struct carries a
+//    bearer access token, and `Codable` conformance is a footgun: any
+//    future caller could accidentally `JSONEncoder().encode(session)`
+//    and write the token to UserDefaults, a plist, iCloud KVS, or a
+//    log file with no compiler warning. The access token already lives
+//    in the Keychain (`KeychainStore.storeAccessToken`); callers that
+//    need it across a process boundary should re-read from there
+//    rather than serializing this struct. See the review thread on
+//    PR 5 for context.
 //  - `Equatable` so SwiftUI views / ViewModels can diff session state.
 //  - The refresh token is intentionally NOT a field on `UserSession`.
 //    Refresh tokens live only inside the Keychain (and only when the
@@ -17,7 +24,7 @@
 
 import Foundation
 
-public struct UserSession: Codable, Equatable {
+public struct UserSession: Equatable {
     /// `sub` claim from the ID token. Stable Okta user identifier.
     public let userId: String
 

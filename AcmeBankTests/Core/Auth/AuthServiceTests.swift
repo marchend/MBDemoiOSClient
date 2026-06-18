@@ -64,6 +64,15 @@ final class AuthServiceTests: XCTestCase {
     private let fixedNow = Date(timeIntervalSince1970: 2_000_000_000)
     private let fixedDevice = "Test Device"
 
+    /// The Okta token endpoint that corresponds to the fixture `issuer`
+    /// above. Note that the AS-id path segment (`default`) is dropped:
+    /// the issuer is `https://example.okta.com/oauth2/default` but the
+    /// token endpoint is `https://example.okta.com/oauth2/v1/token`.
+    /// See `AuthService.tokenEndpoint(forIssuer:)` for the rule.
+    private var expectedTokenURL: URL {
+        URL(string: "https://example.okta.com/oauth2/v1/token")!
+    }
+
     private func makeIDToken(
         sub: String = "00uABCDEF",
         name: String = "Ada Lovelace",
@@ -175,14 +184,17 @@ final class AuthServiceTests: XCTestCase {
     }
 
     // MARK: - signIn: error mapping
+    //
+    // Per the PR 5 review (comment 3434631898), the `OktaDirectAuthFlow`
+    // adapter is responsible for converting SDK-typed errors into
+    // `AuthError` BEFORE they cross the `DirectAuthFlow` seam.
+    // `AuthService.mapSignInError` therefore only handles already-typed
+    // `AuthError`s and `URLError`s — it no longer pattern-matches on
+    // error descriptions. These tests reflect that contract.
 
-    func test_signIn_invalidCredentials_mapsToInvalidCredentials() async {
+    func test_signIn_adapterThrowsTypedAuthError_isRethrownAsIs() async {
         let flow = FakeFlow()
-        flow.nextOutcome = .failure(
-            NSError(domain: "okta", code: 401, userInfo: [
-                NSLocalizedDescriptionKey: "invalid_grant: bad password",
-            ])
-        )
+        flow.nextOutcome = .failure(AuthError.invalidCredentials)
 
         let (service, _, _) = makeSubject(flow: flow)
 
@@ -217,10 +229,14 @@ final class AuthServiceTests: XCTestCase {
     }
 
     func test_signIn_unknownError_mapsToUnknown() async {
+        // An arbitrary NSError that the adapter could not classify
+        // must surface as `.unknown` — and crucially must NOT be
+        // string-sniffed into a more specific case (that's the PII
+        // footgun the review flagged).
         let flow = FakeFlow()
         flow.nextOutcome = .failure(
             NSError(domain: "okta", code: 999, userInfo: [
-                NSLocalizedDescriptionKey: "something opaque",
+                NSLocalizedDescriptionKey: "invalid_grant: user 'ada@example.com' failed",
             ])
         )
 
@@ -271,6 +287,32 @@ final class AuthServiceTests: XCTestCase {
         XCTAssertEqual(session.userId, "00uABCDEF")
     }
 
+    // MARK: - Token endpoint derivation
+    //
+    // PR 5 review (comment 3434628552): the Okta token endpoint sits
+    // ABOVE the authorization-server path segment, not below it.
+
+    func test_tokenEndpoint_stripsCustomAuthorizationServerSegment() {
+        let endpoint = AuthService.tokenEndpoint(
+            forIssuer: URL(string: "https://example.okta.com/oauth2/default")!
+        )
+        XCTAssertEqual(endpoint, URL(string: "https://example.okta.com/oauth2/v1/token"))
+    }
+
+    func test_tokenEndpoint_customASId() {
+        let endpoint = AuthService.tokenEndpoint(
+            forIssuer: URL(string: "https://example.okta.com/oauth2/ausabcdef1234")!
+        )
+        XCTAssertEqual(endpoint, URL(string: "https://example.okta.com/oauth2/v1/token"))
+    }
+
+    func test_tokenEndpoint_orgLevelIssuer_appendsDirectly() {
+        let endpoint = AuthService.tokenEndpoint(
+            forIssuer: URL(string: "https://example.okta.com/oauth2")!
+        )
+        XCTAssertEqual(endpoint, URL(string: "https://example.okta.com/oauth2/v1/token"))
+    }
+
     // MARK: - refresh: happy path
 
     func test_refresh_success_returnsUserSessionAndReWritesTokens() async throws {
@@ -284,7 +326,7 @@ final class AuthServiceTests: XCTestCase {
         ]
         let data = try JSONSerialization.data(withJSONObject: body)
         let response = HTTPURLResponse(
-            url: issuer.appendingPathComponent("v1/token"),
+            url: expectedTokenURL,
             statusCode: 200, httpVersion: nil, headerFields: nil
         )!
 
@@ -311,6 +353,10 @@ final class AuthServiceTests: XCTestCase {
         let request = try XCTUnwrap(transport.receivedRequest)
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(
+            request.url, expectedTokenURL,
+            "Refresh must POST to the org-level Okta token endpoint, not under the AS-id path."
+        )
+        XCTAssertEqual(
             request.value(forHTTPHeaderField: "Content-Type"),
             "application/x-www-form-urlencoded"
         )
@@ -327,7 +373,7 @@ final class AuthServiceTests: XCTestCase {
             "token_type":   "Bearer",
         ]
         let data = try JSONSerialization.data(withJSONObject: body)
-        let response = HTTPURLResponse(url: issuer, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        let response = HTTPURLResponse(url: expectedTokenURL, statusCode: 200, httpVersion: nil, headerFields: nil)!
 
         let transport = FakeTransport()
         transport.nextResult = .success((data, response))
@@ -345,8 +391,12 @@ final class AuthServiceTests: XCTestCase {
     }
 
     // MARK: - refresh: failure mapping + cache clearing
+    //
+    // PR 5 review (comment 3434630018): transport-level failures must
+    // NOT clear the keychain — a transient network blip at cold launch
+    // would otherwise irrevocably destroy "keep me signed in".
 
-    func test_refresh_transportFailure_mapsToNetworkAndClearsKeychain() async {
+    func test_refresh_transportFailure_mapsToNetworkAndPreservesKeychain() async {
         let transport = FakeTransport()
         transport.nextResult = .failure(URLError(.notConnectedToInternet))
 
@@ -360,12 +410,12 @@ final class AuthServiceTests: XCTestCase {
             try await service.refresh(refreshToken: "anything"),
             equals: .network
         )
-        XCTAssertEqual(keychain.clearAllCount, 1,
-            "On refresh transport failure, AuthService must clear the stored refresh token.")
+        XCTAssertEqual(keychain.clearAllCount, 0,
+            "Transport-level failures (offline / timeout) MUST leave the stored refresh token alone — only an explicit 4xx rejection from the IdP indicates the token is stale.")
     }
 
     func test_refresh_400_mapsToInvalidCredentialsAndClearsKeychain() async throws {
-        let response = HTTPURLResponse(url: issuer, statusCode: 400, httpVersion: nil, headerFields: nil)!
+        let response = HTTPURLResponse(url: expectedTokenURL, statusCode: 400, httpVersion: nil, headerFields: nil)!
         let transport = FakeTransport()
         transport.nextResult = .success((Data(), response))
 
@@ -379,15 +429,16 @@ final class AuthServiceTests: XCTestCase {
             try await service.refresh(refreshToken: "stale"),
             equals: .invalidCredentials
         )
-        XCTAssertEqual(keychain.clearAllCount, 1)
+        XCTAssertEqual(keychain.clearAllCount, 1,
+            "A 4xx from the IdP is an explicit token-rejection — the keychain MUST be cleared so the stale token doesn't keep retrying.")
     }
 
-    func test_refresh_500_mapsToNetwork() async {
-        let response = HTTPURLResponse(url: issuer, statusCode: 500, httpVersion: nil, headerFields: nil)!
+    func test_refresh_500_mapsToNetworkAndPreservesKeychain() async {
+        let response = HTTPURLResponse(url: expectedTokenURL, statusCode: 500, httpVersion: nil, headerFields: nil)!
         let transport = FakeTransport()
         transport.nextResult = .success((Data(), response))
 
-        let (service, _, _) = makeSubject(
+        let (service, keychain, _) = makeSubject(
             flow: FakeFlow(),
             keychain: FakeKeychain(),
             transport: transport
@@ -397,6 +448,8 @@ final class AuthServiceTests: XCTestCase {
             try await service.refresh(refreshToken: "x"),
             equals: .network
         )
+        XCTAssertEqual(keychain.clearAllCount, 0,
+            "A 5xx is a server-side hiccup, not a token rejection — keychain MUST NOT be cleared.")
     }
 
     // MARK: - Helpers

@@ -26,20 +26,10 @@ final class UserSessionTests: XCTestCase {
         )
     }
 
-    func test_codable_roundTrip_preservesAllFields() throws {
-        let original = makeSession()
-
-        let data = try JSONEncoder().encode(original)
-        let decoded = try JSONDecoder().decode(UserSession.self, from: data)
-
-        XCTAssertEqual(decoded, original)
-        XCTAssertEqual(decoded.userId,        original.userId)
-        XCTAssertEqual(decoded.displayName,   original.displayName)
-        XCTAssertEqual(decoded.email,         original.email)
-        XCTAssertEqual(decoded.accessToken,   original.accessToken)
-        XCTAssertEqual(decoded.authTimestamp, original.authTimestamp)
-        XCTAssertEqual(decoded.deviceName,    original.deviceName)
-    }
+    // NOTE: `UserSession` is intentionally not `Codable` — the access
+    // token must never accidentally land on disk. See the doc comment
+    // on `UserSession` for rationale. There is therefore no Codable
+    // round-trip test here.
 
     func test_equality_identicalValues_areEqual() {
         XCTAssertEqual(makeSession(), makeSession())
