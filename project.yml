@@ -34,7 +34,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: AcmeBank/AcmeBank.entitlements
     postBuildScripts:
       - script: |
-          "${SRCROOT}/Scripts/inject_okta_config.sh"
+          bash "${SRCROOT}/Scripts/inject_okta_config.sh"
         name: Inject Okta Config
         shell: /bin/bash
         runOnlyWhenInstalling: false
