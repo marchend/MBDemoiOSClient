@@ -55,6 +55,15 @@ final class LoginViewModel: ObservableObject {
     private let oktaConfig: OktaConfig
     private let onAuthenticated: (UserSession) -> Void
 
+    /// Handle for the in-flight `signInTapped` Task, retained so we can
+    /// cancel it in `deinit` if the ViewModel is torn down mid-flight
+    /// (e.g. a coordinator pops the login screen while Okta is still
+    /// thinking). Without this, the unstructured `Task` would keep a
+    /// strong reference to `self` — and to `onAuthenticated` — alive
+    /// until the network call resolves, which is a real leak once the
+    /// login screen is no longer a root view.
+    private var signInTask: Task<Void, Never>?
+
     // MARK: - Closure injection points (set by the coordinator)
 
     /// Called when the user taps "Need help?".
@@ -85,14 +94,29 @@ final class LoginViewModel: ObservableObject {
         self.onAuthenticated = onAuthenticated
     }
 
+    deinit {
+        // Cancel any in-flight sign-in task so we don't keep `self` and
+        // `onAuthenticated` alive past dismissal. Safe to call on a
+        // completed task — it's a no-op.
+        signInTask?.cancel()
+    }
+
     // MARK: - Actions
 
     /// Entry point bound to the Sign-In button. Kicks off the async
     /// sign-in flow on the main actor. We expose the async worker
     /// separately (`performSignIn`) so unit tests can `await` it
     /// deterministically without relying on Task scheduling.
+    ///
+    /// The task handle is retained on `signInTask` so `deinit` can
+    /// cancel it if the ViewModel is torn down mid-flight; the closure
+    /// captures `self` weakly to avoid an unstructured strong-reference
+    /// cycle for the duration of the network call.
     func signInTapped() {
-        Task { await performSignIn() }
+        signInTask?.cancel()
+        signInTask = Task { [weak self] in
+            await self?.performSignIn()
+        }
     }
 
     /// Async sign-in worker. Pinned to `@MainActor` so the `@Published`
@@ -104,8 +128,18 @@ final class LoginViewModel: ObservableObject {
     func performSignIn() async {
         // Build-time guard: a build without Okta keys must surface the
         // misconfiguration in-app and must NOT call into AuthService.
-        guard case .configured = oktaConfig, let authService else {
+        guard case .configured = oktaConfig else {
             errorMessage = "Okta is not configured on this build — see README."
+            return
+        }
+
+        // Composition-root invariant: `.configured` MUST be paired with
+        // a non-nil `authService`. The type system can't enforce this,
+        // so we make a wiring bug loudly visible in debug builds rather
+        // than silently surfacing the misleading "not configured" copy.
+        guard let authService else {
+            assertionFailure("authService is nil despite oktaConfig == .configured — composition-root wiring bug")
+            errorMessage = Self.copy(for: .unknown)
             return
         }
 

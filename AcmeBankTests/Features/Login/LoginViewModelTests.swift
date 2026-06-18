@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 @testable import AcmeBank
 
 /// Pinned to `@MainActor` because `LoginViewModel.performSignIn()` is
@@ -233,10 +234,22 @@ final class LoginViewModelTests: XCTestCase {
         sut.username = "user@acmebank.com"
         sut.password = "secret"
 
+        // Use an XCTestExpectation driven by the `$isSigningIn`
+        // publisher rather than a polling loop — scheduler-cooperative
+        // and surfaces *which* condition failed if it times out.
+        let signingInExpectation = expectation(
+            description: "isSigningIn flips to true once the fake is entered"
+        )
+        var cancellables = Set<AnyCancellable>()
+        sut.$isSigningIn
+            .filter { $0 }
+            .first()
+            .sink { _ in signingInExpectation.fulfill() }
+            .store(in: &cancellables)
+
         let task = Task { await sut.performSignIn() }
 
-        // Wait for the call to enter the fake (isSigningIn flips).
-        await waitForCondition(timeout: 2.0) { sut.isSigningIn }
+        await fulfillment(of: [signingInExpectation], timeout: 2.0)
         XCTAssertTrue(sut.isSigningIn)
         XCTAssertEqual(fake.signInCallCount, 1)
 
@@ -244,6 +257,8 @@ final class LoginViewModelTests: XCTestCase {
         gate.open()
         await task.value
 
+        // `await task.value` already synchronises with the end of
+        // `performSignIn`, so the post-await reads need no further wait.
         XCTAssertFalse(sut.isSigningIn, "isSigningIn should clear on return")
         XCTAssertTrue(onAuthenticatedCalled)
         XCTAssertNil(sut.errorMessage)
@@ -365,10 +380,21 @@ final class LoginViewModelTests: XCTestCase {
         sut.username = "user@acmebank.com"
         sut.password = "secret"
 
+        // Wait for `isSigningIn` to flip to true via the published
+        // pipeline rather than a polling loop.
+        let signingInExpectation = expectation(
+            description: "first performSignIn enters the fake (isSigningIn == true)"
+        )
+        var cancellables = Set<AnyCancellable>()
+        sut.$isSigningIn
+            .filter { $0 }
+            .first()
+            .sink { _ in signingInExpectation.fulfill() }
+            .store(in: &cancellables)
+
         let first = Task { await sut.performSignIn() }
 
-        // Wait until the first call has entered the fake (isSigningIn is true).
-        await waitForCondition(timeout: 2.0) { sut.isSigningIn }
+        await fulfillment(of: [signingInExpectation], timeout: 2.0)
         XCTAssertEqual(fake.signInCallCount, 1)
 
         // Second tap while the first is still in flight — must be a no-op.
@@ -382,6 +408,8 @@ final class LoginViewModelTests: XCTestCase {
         gate.open()
         await first.value
 
+        // `await first.value` synchronises with the end of the first
+        // call; the post-await reads need no further wait.
         XCTAssertFalse(sut.isSigningIn)
         XCTAssertEqual(fake.signInCallCount, 1)
     }
@@ -426,30 +454,33 @@ final class LoginViewModelTests: XCTestCase {
         sut.username = "user@acmebank.com"
         sut.password = "secret"
 
+        // `signInTapped` is fire-and-forget, so we have no Task handle
+        // to `await`. Drive the assertion via `$isSigningIn` — wait for
+        // the flag to flip on (call has entered the fake) and then off
+        // again (call has returned). Both stages run through the same
+        // publisher pipeline so the scheduler can hand the runtime a
+        // turn cooperatively, rather than us spin-polling.
+        let didStart = expectation(description: "isSigningIn flips to true")
+        let didFinish = expectation(description: "isSigningIn flips back to false")
+        var cancellables = Set<AnyCancellable>()
+        var sawTrue = false
+        sut.$isSigningIn
+            .dropFirst() // ignore the initial `false` from current value
+            .sink { value in
+                if value && !sawTrue {
+                    sawTrue = true
+                    didStart.fulfill()
+                } else if !value && sawTrue {
+                    didFinish.fulfill()
+                }
+            }
+            .store(in: &cancellables)
+
         sut.signInTapped()
 
-        await waitForCondition(timeout: 2.0) { fake.signInCallCount == 1 }
-        await waitForCondition(timeout: 2.0) { !sut.isSigningIn }
+        await fulfillment(of: [didStart, didFinish], timeout: 2.0, enforceOrder: true)
         XCTAssertEqual(fake.signInCallCount, 1)
-    }
-
-    // MARK: - Helpers
-
-    /// Polls `condition` until it returns `true` or the timeout elapses.
-    /// Used to wait for `@Published` state changes set inside an async
-    /// task to become observable to the test.
-    private func waitForCondition(
-        timeout: TimeInterval,
-        _ condition: () -> Bool,
-        file: StaticString = #filePath,
-        line: UInt = #line
-    ) async {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if condition() { return }
-            try? await Task.sleep(nanoseconds: 5_000_000) // 5 ms
-        }
-        XCTFail("Condition not met within \(timeout)s", file: file, line: line)
+        XCTAssertFalse(sut.isSigningIn)
     }
 }
 
