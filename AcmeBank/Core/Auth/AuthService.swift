@@ -335,7 +335,7 @@ public final class AuthService: AuthServicing {
         return s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s
     }
 
-    static func defaultDeviceName() -> String {
+    public static func defaultDeviceName() -> String {
         #if canImport(UIKit)
         return UIDevice.current.name
         #else
