@@ -80,7 +80,10 @@ final class KeychainStoreTests: XCTestCase {
         let query = store.baseQuery(account: .idToken)
         XCTAssertEqual(query[kSecAttrService as String] as? String, service)
         XCTAssertEqual(query[kSecAttrAccount as String] as? String, "id_token")
-        XCTAssertEqual(query[kSecClass as String] as? CFString, kSecClassGenericPassword)
+        // Compare as String to avoid Swift's "conditional downcast from CFString
+        // to CFString always succeeds" diagnostic on Xcode 26.3+. CFString and
+        // String are toll-free bridged, so the cast and equality still hold.
+        XCTAssertEqual(query[kSecClass as String] as? String, kSecClassGenericPassword as String)
     }
 
     func test_baseQuery_differentAccountsHaveDifferentRawValues() {
