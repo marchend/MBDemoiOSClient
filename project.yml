@@ -3,11 +3,18 @@ options:
   bundleIdPrefix: com.acmebank
   deploymentTarget:
     iOS: "17.0"
+packages:
+  OktaMobile:
+    url: https://github.com/okta/okta-mobile-swift
+    from: "2.0.0"
 targets:
   AcmeBank:
     type: application
     platform: iOS
     sources: [AcmeBank]
+    dependencies:
+      - package: OktaMobile
+        product: OktaDirectAuth
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.acmebank.mobile
@@ -19,10 +26,23 @@ targets:
         CODE_SIGNING_REQUIRED: "NO"
         ENABLE_USER_SCRIPT_SANDBOXING: "NO"
         CODE_SIGN_ENTITLEMENTS: AcmeBank/AcmeBank.entitlements
+    postBuildScripts:
+      - script: |
+          "${SRCROOT}/Scripts/inject_okta_config.sh"
+        name: Inject Okta Config
+        shell: /bin/bash
+        runOnlyWhenInstalling: false
+        basedOnDependencyAnalysis: false
   AcmeBankTests:
     type: bundle.unit-test
     platform: iOS
     sources: [AcmeBankTests]
+    dependencies:
+      - target: AcmeBank
+  AcmeBankUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [AcmeBankUITests]
     dependencies:
       - target: AcmeBank
 schemes:
@@ -30,5 +50,5 @@ schemes:
     build:
       targets: { AcmeBank: all }
     test:
-      targets: [AcmeBankTests]
+      targets: [AcmeBankTests, AcmeBankUITests]
       parallelizable: false

@@ -14,11 +14,11 @@ in separate PRs.
 | Language | Swift 5.10 |
 | UI Framework | SwiftUI |
 | Architecture | MVVM + Coordinator (SwiftUI `NavigationStack`) |
-| Auth | Okta OIDC via `okta-mobile-swift` (deferred) |
+| Auth | Okta OIDC via `okta-mobile-swift` (`OktaDirectAuth`) |
 | Networking | `URLSession` + async/await (deferred) |
 | Dependency Injection | Constructor injection; no service locator |
 | Project files | XcodeGen (`project.yml`) — never hand-craft `.pbxproj` |
-| Test framework | XCTest (unit) + XCUITest (UI, deferred) |
+| Test framework | XCTest (unit) + XCUITest (`AcmeBankUITests` target) |
 | Minimum Xcode | 16.0 |
 | Bundle ID | `com.acmebank.mobile` |
 
@@ -43,14 +43,31 @@ xcodebuild test \
   -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
 
+## Okta build configuration
+The four `OKTA_*` shell env vars (`OKTA_ISSUER`, `OKTA_CLIENT_ID`,
+`OKTA_REDIRECT_URI`, `OKTA_SCOPES`) are injected into `Info.plist` at build
+time by `Scripts/inject_okta_config.sh` (a Run Script build phase ordered
+after Copy Bundle Resources) and read at runtime by
+`AcmeBank/Core/Config/OktaConfig.swift`. The build NEVER fails on missing
+vars — the script writes `__OKTA_*_UNSET__` sentinels and `OktaConfig.load()`
+returns `.notConfigured(reason:)`. UI tests additionally read
+`OKTA_TEST_USERNAME` / `OKTA_TEST_PASSWORD` from `ProcessInfo` in the test
+runner (NOT the app bundle). Full setup recipes + the `PhaseScriptExecution`
+env-var caveat live in [README.md → Okta build configuration](README.md#okta-build-configuration).
+
 ## Key Directory Structure
 ```
 project.yml                  # XcodeGen spec — source of truth for the project
 setup.sh                     # Post-clone one-shot materialisation
+Scripts/
+└── inject_okta_config.sh    # Run Script build phase: env vars → Info.plist
 AcmeBank/
 ├── App/
 │   └── AcmeBankApp.swift    # @main SwiftUI entry (implemented)
 ├── ContentView.swift         # Root view — presents LoginView (implemented)
+├── Core/
+│   └── Config/
+│       └── OktaConfig.swift # Runtime loader for Info.plist Okta keys
 ├── Theme/
 │   └── AcmeBankTheme.swift  # Brand colors (acmeNavy #1B2A4A) + font helpers
 ├── Features/
@@ -69,10 +86,14 @@ AcmeBank/
 └── PrivacyInfo.xcprivacy    # Privacy manifest (implemented)
 AcmeBankTests/
 ├── AcmeBankTests.swift      # Bootstrap smoke test (implemented)
+├── Core/
+│   └── Config/
+│       └── OktaConfigTests.swift # Unit tests for OktaConfig.load
 └── Features/
     └── Login/
         ├── LoginViewModelTests.swift    # Unit tests for ViewModel logic
         └── LoginViewSnapshotTests.swift # Structural render tests (UIHostingController)
+AcmeBankUITests/             # XCUITest target stanza (source files arrive in a later PR)
 
 # Planned (not yet created — added by feature PRs):
 AcmeBank/
@@ -94,7 +115,6 @@ AcmeBank/
 AcmeBankTests/
 ├── Core/Auth/               # AuthServiceTests (deferred)
 └── Features/Home/           # HomeViewModelTests (deferred)
-AcmeBankUITests/             # XCUITest target for critical flows (deferred)
 ```
 
 ## Planned Architecture (from spec)
@@ -151,7 +171,7 @@ coordinators/root views — never inside a ViewModel.
 (named `Font` extensions). All fonts must scale with Dynamic Type.
 
 ## Deferred Work
-- Okta OIDC authentication (`okta-mobile-swift` 2.x) — future PR
+- Okta OIDC authentication wiring (AuthService + KeychainStore + UserSession) — future PR
 - AppCoordinator / RootView (auth-state switching) — future PR
 - LoginCoordinator — future PR
 - Home Dashboard feature (BFF `GET /v1/home`, `HomeDashboard` model) — future PR
@@ -160,10 +180,9 @@ coordinators/root views — never inside a ViewModel.
 - Domain models (Account, Transaction, Customer, TransferRequest) — future PR
 - Repository protocols + remote + mock implementations — future PRs
 - Internal notification system (AppNotification, NotificationPublisher) — future PR
-- XCUITest target + critical-flow UI tests — future PR
+- XCUITest critical-flow source files (target stanza already in `project.yml`) — future PR
 - SwiftLint (`.swiftlint.yml`) + CI `-warnings-as-errors` xcconfig — future PR
 - CI/CD GitHub Actions workflow (`ios-build.yml`) — future PR
-- `Okta.plist` / `Okta.plist.example` — future PR (alongside AuthService)
 - Core extensions (Decimal+Currency, Date+Greeting, String+Initials) — future PR
 - TabBarCoordinator, MoreCoordinator, CardsCoordinator, TransferCoordinator — future PRs
 
