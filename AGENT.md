@@ -66,6 +66,12 @@ AcmeBank/
 │   └── AcmeBankApp.swift    # @main SwiftUI entry (implemented)
 ├── ContentView.swift         # Root view — presents LoginView (implemented)
 ├── Core/
+│   ├── Auth/
+│   │   ├── UserSession.swift       # Codable session value type (implemented)
+│   │   ├── KeychainStore.swift     # SecItem wrapper, kSecUseDataProtectionKeychain (implemented)
+│   │   ├── IDTokenDecoder.swift    # JWT payload decoder (implemented)
+│   │   ├── AuthService.swift       # DirectAuth signIn + refresh-token grant (implemented)
+│   │   └── AuthService+Okta.swift  # OktaDirectAuth adapter for DirectAuthFlow (implemented)
 │   └── Config/
 │       └── OktaConfig.swift # Runtime loader for Info.plist Okta keys
 ├── Theme/
@@ -87,6 +93,11 @@ AcmeBank/
 AcmeBankTests/
 ├── AcmeBankTests.swift      # Bootstrap smoke test (implemented)
 ├── Core/
+│   ├── Auth/
+│   │   ├── UserSessionTests.swift     # Codable round-trip + equality
+│   │   ├── KeychainStoreTests.swift   # Store/load/clear + data-protection flag
+│   │   ├── IDTokenDecoderTests.swift  # JWT decode happy + rejection paths
+│   │   └── AuthServiceTests.swift     # signIn + refresh with injected fakes
 │   └── Config/
 │       └── OktaConfigTests.swift # Unit tests for OktaConfig.load
 └── Features/
@@ -100,7 +111,6 @@ AcmeBank/
 ├── App/
 │   ├── RootView.swift       # auth-state switcher (deferred)
 │   └── AppCoordinator.swift # root coordinator (deferred)
-├── Core/Auth/               # AuthService, KeychainStore, UserSession (deferred)
 ├── Core/Networking/         # APIClient, APIRouter, APIError, RequestInterceptor (deferred)
 ├── Core/Notifications/      # AppNotification, NotificationPublisher (deferred)
 ├── Core/Extensions/         # Decimal+Currency, Date+Greeting, String+Initials (deferred)
@@ -113,7 +123,6 @@ AcmeBank/
 ├── Features/Transfer/       # (deferred)
 └── Features/Cards/          # (deferred)
 AcmeBankTests/
-├── Core/Auth/               # AuthServiceTests (deferred)
 └── Features/Home/           # HomeViewModelTests (deferred)
 ```
 
@@ -146,16 +155,32 @@ AppCoordinator
         └── MoreCoordinator
 ```
 
-### Authentication — Okta OIDC *(deferred)*
-`AuthService` → browser-based OIDC → decode ID-token claims → persist tokens
-via `KeychainStore` → return `UserSession`. `RequestInterceptor` refreshes
-tokens before every network request; expired session posts
-`AppNotification.sessionExpired`.
-
-**Keychain note:** all `SecItem*` calls MUST include
-`kSecUseDataProtectionKeychain: true` to work in CI simulator builds
-(`CODE_SIGNING_ALLOWED=NO`). The entitlements file covers signed-device
-builds; the flag covers the simulator path.
+### Authentication — Okta OIDC (Core/Auth integration layer implemented in PR 2)
+- `AuthServicing` protocol exposes `signIn(username:password:keepSignedIn:)` and
+  `refresh(refreshToken:)`. UI calls go through this protocol — never the SDK directly.
+- `AuthService` uses `OktaDirectAuth.DirectAuthenticationFlow` via the
+  `DirectAuthFlow` seam: `flow.start(username, with: .password(password))`
+  (no `.primary(...)` wrapper). Refresh-token grant hits Okta's
+  `<issuer>/v1/token` endpoint via a `TokenRefreshTransport` seam (default
+  `URLSession.shared`).
+- `IDTokenDecoder` decodes the JWT payload (no signature verification —
+  out of scope; the IdP/SDK has already validated it).
+- `KeychainStore` writes `id_token`, `access_token`, `refresh_token` under
+  the same service identifier. **Every** `SecItem*` call includes
+  `kSecUseDataProtectionKeychain: true` so the simulator (CI,
+  `CODE_SIGNING_ALLOWED=NO`) can read/write items; the entitlements file
+  covers signed-device builds.
+- Refresh token is persisted **iff** `keepSignedIn == true`. On any
+  refresh-grant failure, AuthService clears the keychain so a stale
+  refresh token doesn't keep retrying.
+- Post-success failures (JWT decode, keychain write) are typed: keychain
+  writes are best-effort (cache miss), JWT decode failures map to
+  `AuthError.unknown`. **Never** let a `KeychainError` or
+  `IDTokenDecoder.DecodeError` escape `signIn` as an untyped error — the
+  UI's `catch let e as AuthError` would miss it and show a misleading
+  network-error banner even though Okta succeeded.
+- Composition root (instantiating `AuthService` from `OktaConfig` and
+  wiring it into `LoginViewModel`) is deferred to PR 4.
 
 ### Networking *(deferred)*
 `APIClient` wraps `URLSession` with `async/await`; decodes with
@@ -171,8 +196,7 @@ coordinators/root views — never inside a ViewModel.
 (named `Font` extensions). All fonts must scale with Dynamic Type.
 
 ## Deferred Work
-- Okta OIDC authentication wiring (AuthService + KeychainStore + UserSession) — future PR
-- AppCoordinator / RootView (auth-state switching) — future PR
+- AppCoordinator / RootView (auth-state switching, AuthService composition root) — future PR
 - LoginCoordinator — future PR
 - Home Dashboard feature (BFF `GET /v1/home`, `HomeDashboard` model) — future PR
 - Accounts, Transfer, Cards features — future PRs
