@@ -42,7 +42,7 @@ final class SignInToLandingUITests: XCTestCase {
         let usernameField = app.textFields["usernameField"]
         XCTAssertTrue(
             usernameField.waitForExistence(timeout: 10),
-            "Username field never appeared \u2014 the app may have crashed at launch."
+            "Username field never appeared — the app may have crashed at launch."
         )
         usernameField.tap()
         usernameField.typeText(username)
@@ -74,7 +74,7 @@ final class SignInToLandingUITests: XCTestCase {
         let welcomeGreeting = app.staticTexts["welcomeGreeting"]
         XCTAssertTrue(
             welcomeGreeting.waitForExistence(timeout: 10),
-            "welcomeGreeting did not appear within 10 s after Sign In tap \u2014 sign-in flow broken."
+            "welcomeGreeting did not appear within 10 s after Sign In tap — sign-in flow broken."
         )
 
         // Email element exists too (no timeout needed: greeting and
