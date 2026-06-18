@@ -83,7 +83,7 @@ struct LoginView: View {
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(Color.primary)
 
-            TextField("Enter your username", text: $viewModel.username)
+            TextField("name@acmebank.com", text: $viewModel.username)
                 .keyboardType(.emailAddress)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
@@ -106,14 +106,22 @@ struct LoginView: View {
                 .foregroundStyle(Color.primary)
 
             HStack(spacing: 0) {
+                // Both fields stay in the hierarchy simultaneously; only opacity
+                // and interaction are toggled. This prevents the keyboard from
+                // dismissing and typed text from being lost when the user taps
+                // the eye icon (SwiftUI would otherwise destroy and re-create
+                // the underlying UITextField on every if/else branch swap).
                 Group {
-                    if viewModel.isPasswordVisible {
-                        TextField("Enter your password", text: $viewModel.password)
-                            .textContentType(.password)
-                    } else {
-                        SecureField("Enter your password", text: $viewModel.password)
-                            .textContentType(.password)
-                    }
+                    TextField("Enter your password", text: $viewModel.password)
+                        .textContentType(.password)
+                        .opacity(viewModel.isPasswordVisible ? 1 : 0)
+                        .disabled(!viewModel.isPasswordVisible)
+                        .overlay(
+                            SecureField("Enter your password", text: $viewModel.password)
+                                .textContentType(.password)
+                                .opacity(viewModel.isPasswordVisible ? 0 : 1)
+                                .disabled(viewModel.isPasswordVisible)
+                        )
                 }
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
@@ -176,8 +184,11 @@ struct LoginView: View {
 
             Spacer()
 
+            // The view owns the Help sheet presentation entirely.
+            // onNeedHelp() is intentionally not called here so that when
+            // the coordinator is wired in a future PR it cannot cause a
+            // double-presentation conflict.
             Button("Need help?") {
-                viewModel.onNeedHelp()
                 isNeedHelpSheetPresented = true
             }
             .font(.subheadline)
@@ -251,10 +262,12 @@ private struct NeedHelpSheet: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
 
-                Link("Visit Okta Support", destination: URL(string: "https://support.okta.com")!)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(Color.acmeNavy)
-                    .frame(minHeight: 44)
+                if let supportURL = URL(string: "https://support.okta.com") {
+                    Link("Visit Okta Support", destination: supportURL)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color.acmeNavy)
+                        .frame(minHeight: 44)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("Help")
