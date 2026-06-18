@@ -35,7 +35,7 @@ final class NotConfiguredBannerUITests: XCTestCase {
         let usernameField = app.textFields["usernameField"]
         XCTAssertTrue(
             usernameField.waitForExistence(timeout: 5),
-            "Username field never appeared \u2014 the app may have crashed at launch."
+            "Username field never appeared \u{2014} the app may have crashed at launch."
         )
         usernameField.tap()
         usernameField.typeText("not-a-real-user")
