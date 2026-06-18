@@ -24,9 +24,9 @@
 //  Cold-launch refresh contract:
 //  - If `OktaConfig` is `.configured` AND `KeychainStore.loadRefreshToken()`
 //    returns a non-nil token, we kick off `authService.refresh(...)`.
-//    Success → `session` is populated and `RootView` renders the
+//    Success \u2192 `session` is populated and `RootView` renders the
 //    `LandingView` directly (no login screen flash).
-//    Failure → `session` stays nil. `AuthService.refresh` is already
+//    Failure \u2192 `session` stays nil. `AuthService.refresh` is already
 //    responsible for clearing the keychain on a 4xx (stale token); we
 //    do NOT clear it again here on transport failures, because the
 //    refresh token may still be valid and a flaky launch must not
@@ -37,6 +37,7 @@
 
 import Foundation
 import Combine
+import os
 
 @MainActor
 public final class AppCoordinator: ObservableObject {
@@ -63,6 +64,14 @@ public final class AppCoordinator: ObservableObject {
     /// deterministically rather than poll. `nil` when the refresh path
     /// did not run (no token in keychain, or `.notConfigured`).
     public private(set) var bootstrapTask: Task<Void, Never>?
+
+    /// Subsystem-scoped logger so sign-out failures are searchable in
+    /// Console.app / `log stream --predicate 'subsystem == "..."'`
+    /// during QA and staging without leaking to release stdout.
+    private static let log = Logger(
+        subsystem: "com.acmebank.AcmeBank",
+        category: "AppCoordinator"
+    )
 
     // MARK: - Init
 
@@ -130,8 +139,41 @@ public final class AppCoordinator: ObservableObject {
     /// Clears the in-memory session and the persisted refresh token. Not
     /// wired to a UI surface in this PR; exposed so future stories
     /// (Settings \u2192 "Sign out") can call it.
+    ///
+    /// Known failure mode \u2014 read before changing this method:
+    /// `keychain.clearAll()` can throw in genuinely rare cases
+    /// (`errSecNotAvailable` under low-memory pressure, or a sandbox
+    /// entitlement mismatch on a future build target). If it does, the
+    /// refresh token persists in the Keychain. We still clear
+    /// `session` in memory so the UI reflects the user's intent, but
+    /// the *next cold launch* will see the leftover refresh token,
+    /// call `AuthService.refresh`, and \u2014 if the token is still valid
+    /// \u2014 silently sign the user back in. For a banking app that is a
+    /// material auth-state inconsistency.
+    ///
+    /// Mitigations in this PR:
+    ///   - log the failure via `os.Logger` so it is visible in
+    ///     Console.app during QA / staging without leaking to release
+    ///     stdout;
+    ///   - `assertionFailure` so debug builds trap immediately, giving
+    ///     us a stack trace the first time this surfaces in CI;
+    ///   - leave the in-memory `session` cleared so the UI does not
+    ///     contradict the user's tap.
+    ///
+    /// Do NOT "simplify" this back to `try? keychain.clearAll()`. If
+    /// the method ever needs to surface the failure to a UI caller,
+    /// promote it to `throws` rather than re-hiding the error.
     public func signOut() {
-        try? keychain.clearAll()
+        do {
+            try keychain.clearAll()
+        } catch {
+            Self.log.error(
+                "signOut: keychain.clearAll() failed; refresh token may persist and auto-sign-in on next launch. error=\(String(describing: error), privacy: .public)"
+            )
+            assertionFailure(
+                "signOut: keychain.clearAll() failed: \(error). See AppCoordinator.signOut() docs for the auth-state inconsistency this can cause."
+            )
+        }
         session = nil
     }
 }

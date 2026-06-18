@@ -35,7 +35,7 @@ final class NotConfiguredBannerUITests: XCTestCase {
         let usernameField = app.textFields["usernameField"]
         XCTAssertTrue(
             usernameField.waitForExistence(timeout: 5),
-            "Username field never appeared — the app may have crashed at launch."
+            "Username field never appeared \u2014 the app may have crashed at launch."
         )
         usernameField.tap()
         usernameField.typeText("not-a-real-user")
@@ -66,27 +66,30 @@ final class NotConfiguredBannerUITests: XCTestCase {
         let bannerStatic = app.staticTexts.matching(bannerPredicate).firstMatch
         let bannerOther = app.otherElements.matching(bannerPredicate).firstMatch
 
-        let bannerExpectation = expectation(
-            description: "Not-configured banner appears within 5 s"
-        )
-        // Poll both element types every 0.1 s up to 5 s. We use a
-        // poll loop (not XCUI's built-in `waitForExistence`) because
-        // we don't know in advance which element class hosts the
-        // combined accessibility element on this OS version.
-        DispatchQueue.global().async {
-            let deadline = Date().addingTimeInterval(5.0)
-            while Date() < deadline {
-                if bannerStatic.exists || bannerOther.exists {
-                    bannerExpectation.fulfill()
-                    return
-                }
-                Thread.sleep(forTimeInterval: 0.1)
-            }
-        }
-        wait(for: [bannerExpectation], timeout: 5.5)
+        // Wait for the banner to appear on the test thread using
+        // `waitForExistence`, which is the supported XCTest API for
+        // this (it polls on the test thread and is safe to call from
+        // the main thread). We don't know in advance which element
+        // class hosts the combined accessibility element on this OS
+        // version, so we try both:
+        //
+        //   - If `bannerStatic` materialises within 5 s, the first
+        //     call returns `true` and the second short-circuits
+        //     immediately (its `.exists` is already `true`, so
+        //     `waitForExistence` returns without further polling).
+        //   - If `bannerStatic` never appears, the first call burns
+        //     its full 5 s budget and we then give `bannerOther` its
+        //     own budget.
+        //
+        // This replaces an earlier `DispatchQueue.global().async` poll
+        // that called `.exists` from a background thread \u2014 unsupported
+        // by XCTest and a documented source of CI flakiness.
+        let appeared =
+            bannerStatic.waitForExistence(timeout: 5)
+            || bannerOther.waitForExistence(timeout: 5)
 
         XCTAssertTrue(
-            bannerStatic.exists || bannerOther.exists,
+            appeared,
             "Not-configured banner with copy containing '\(needle)' never appeared."
         )
     }
