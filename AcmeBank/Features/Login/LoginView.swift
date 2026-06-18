@@ -94,6 +94,7 @@ struct LoginView: View {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(Color.acmeBorder, lineWidth: 1)
                 )
+                .disabled(viewModel.isSigningIn)
                 .accessibilityLabel("Username")
                 .accessibilityIdentifier("usernameField")
         }
@@ -151,6 +152,7 @@ struct LoginView: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(Color.acmeBorder, lineWidth: 1)
             )
+            .disabled(viewModel.isSigningIn)
         }
     }
 
@@ -202,12 +204,27 @@ struct LoginView: View {
         Button {
             viewModel.signInTapped()
         } label: {
-            Text("Sign in")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(Color.white)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: 44)
-                .padding(.vertical, 4)
+            // While a sign-in is in flight, swap the label for a spinner
+            // so the user sees that the tap was registered and that the
+            // app is doing work. The button is also `.disabled` below,
+            // which prevents a second tap from firing a parallel call
+            // (the ViewModel also guards against this, but disabling at
+            // the UI layer prevents the visual flash entirely).
+            ZStack {
+                Text("Sign in")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.white)
+                    .opacity(viewModel.isSigningIn ? 0 : 1)
+
+                if viewModel.isSigningIn {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .tint(Color.white)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 44)
+            .padding(.vertical, 4)
         }
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -217,7 +234,7 @@ struct LoginView: View {
                         : Color.acmeNavy.opacity(0.4)
                 )
         )
-        .disabled(!viewModel.isSignInEnabled)
+        .disabled(!viewModel.isSignInEnabled || viewModel.isSigningIn)
         .accessibilityLabel("Sign in")
         .accessibilityIdentifier("signInButton")
     }
@@ -308,5 +325,13 @@ private struct NeedHelpSheet: View {
     vm.username = "user@acmebank.com"
     vm.password = "password123"
     vm.isPasswordVisible = true
+    return LoginView(viewModel: vm)
+}
+
+#Preview("Signing in") {
+    let vm = LoginViewModel()
+    vm.username = "user@acmebank.com"
+    vm.password = "password123"
+    vm.isSigningIn = true
     return LoginView(viewModel: vm)
 }

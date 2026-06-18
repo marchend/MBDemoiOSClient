@@ -136,12 +136,24 @@ AcmeBankTests/
   drives push/sheet/fullScreenCover declaratively. *(deferred)*
 - **Repository protocols** — `Domain/`; concrete implementations in `Data/`. *(deferred)*
 
-### Login screen (implemented in PR 1)
+### Login screen (UI in PR 1; AuthService wiring in PR 3)
 - `LoginViewModel` — pure Swift, no SwiftUI import. `@Published` properties: `username`,
-  `password`, `keepSignedIn`, `isPasswordVisible`, `errorMessage`. Computed `isSignInEnabled`.
-  Closure injection: `onSignIn(String, String, Bool)`, `onNeedHelp()`.
+  `password`, `keepSignedIn`, `isPasswordVisible`, `errorMessage`, `isSigningIn`.
+  Computed `isSignInEnabled`. Constructor-injects `AuthServicing?` (nil on the
+  `.notConfigured` build path), `OktaConfig`, and `onAuthenticated: (UserSession) -> Void`.
+  Closure injection: `onNeedHelp()`. `signInTapped()` launches `performSignIn()` —
+  which guards `.configured`, then guards `!isSigningIn`, calls
+  `authService.signIn(...)`, and on success invokes `onAuthenticated(session)`.
+  `AuthError` cases map to verbatim user-facing copy in one private static
+  table (`invalidCredentials` → "Incorrect username or password. Please try
+  again.", `network` → "Couldn't reach Okta — check your connection and try
+  again.", `mfaRequired` → "MFA is required but not supported in this build.").
+  Editing `username` or `password` clears `errorMessage` (via `didSet`
+  delegating to `usernameDidChange()` / `passwordDidChange()`).
 - `LoginView` — accepts injected `LoginViewModel` via `init(viewModel:)` for testability;
   wraps content in `NavigationStack`; composes `OktaHeaderView` + scroll body + `OktaFooterView`.
+  Username / password `TextField`s and the Sign-In button are `.disabled(viewModel.isSigningIn)`;
+  the button label is swapped for a `ProgressView` while `isSigningIn`.
 - Brand color `Color.acmeNavy` = `#1B2A4A` defined in `AcmeBank/Theme/AcmeBankTheme.swift`.
 
 ### Coordinator tree *(deferred)*
@@ -180,7 +192,8 @@ AppCoordinator
   UI's `catch let e as AuthError` would miss it and show a misleading
   network-error banner even though Okta succeeded.
 - Composition root (instantiating `AuthService` from `OktaConfig` and
-  wiring it into `LoginViewModel`) is deferred to PR 4.
+  passing it into `LoginViewModel` at app startup) is deferred to PR 4.
+  PR 3 already extends `LoginViewModel` to accept the dependency.
 
 ### Networking *(deferred)*
 `APIClient` wraps `URLSession` with `async/await`; decodes with
