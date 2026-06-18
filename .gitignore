@@ -14,5 +14,10 @@ build/
 Pods/
 
 # Swift Package Manager
+# Ignore the SPM working directory but DO commit Package.resolved so the
+# whole team (and CI) resolves to the same Okta dependency version.
+# `.swiftpm/` contains the per-user workspace state we don't want tracked;
+# the `!` re-include below keeps Package.resolved under version control.
 .swiftpm/
+!.swiftpm/xcode/package.resolved
 .build/

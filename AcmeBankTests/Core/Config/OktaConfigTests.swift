@@ -100,4 +100,20 @@ final class OktaConfigTests: XCTestCase {
             "Reason should indicate malformed issuer URL, got: \(reason)"
         )
     }
+
+    func test_load_malformedRedirectURIURL_returnsNotConfigured() {
+        // A bare string with whitespace and no scheme is not a usable
+        // custom-scheme redirect URI. `URL(string:)` is quite permissive,
+        // so this exercises the `redirectURL.scheme != nil` guard
+        // symmetric to the malformed-issuer path above.
+        let result = OktaConfig.load(from: info(redirectURI: "not a url"))
+
+        guard case let .notConfigured(reason) = result else {
+            return XCTFail("Expected .notConfigured, got \(result)")
+        }
+        XCTAssertTrue(
+            reason.localizedCaseInsensitiveContains("malformed") || reason.contains("OktaRedirectURI"),
+            "Reason should indicate malformed redirect URI URL, got: \(reason)"
+        )
+    }
 }

@@ -6,7 +6,13 @@ options:
 packages:
   OktaMobile:
     url: https://github.com/okta/okta-mobile-swift
-    from: "2.0.0"
+    # Pinned to the 2.x line. `from:` would also accept 3.x once published,
+    # which is higher risk than usual for an authentication library
+    # (token storage / endpoint semantics can change without a compile error).
+    # The accompanying Package.resolved (committed, see .gitignore) locks the
+    # exact resolved version for everyone on the team.
+    minVersion: "2.0.0"
+    maxVersion: "3.0.0"
 targets:
   AcmeBank:
     type: application
