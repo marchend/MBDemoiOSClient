@@ -3,25 +3,26 @@
 # inject_okta_config.sh
 #
 # Xcode Run Script build phase that bridges shell environment variables into
-# the built app's Info.plist. Reads four OKTA_* env vars from the calling
-# process and writes either the real value or a recognisable sentinel into
-# ${INFOPLIST_PATH} via PlistBuddy (upsert: Set, else Add).
+# the built app's Info.plist. Reads the four OKTA_* env vars plus API_BASE_URL
+# from the calling process and writes either the real value or a recognisable
+# sentinel into ${INFOPLIST_PATH} via PlistBuddy (upsert: Set, else Add).
 #
 # This script NEVER `exit 1`s on missing vars — an unconfigured developer build
 # must still compile and run, surfacing the misconfiguration at runtime via
-# `OktaConfig.load()` returning `.notConfigured(...)`. CI gates against the
-# sentinels separately.
+# `OktaConfig.load()` / `APIBaseURLProvider.load()` returning a "not
+# configured" result. CI gates against the sentinels separately.
 #
 # Why PlistBuddy and not `plutil -replace`:
-#   `project.yml` sets GENERATE_INFOPLIST_FILE: YES, so Xcode generates a
-#   minimal Info.plist that does NOT pre-declare OktaIssuer/OktaClientID/
-#   OktaRedirectURI/OktaScopes. `plutil -replace` exits non-zero when the
-#   key is missing — which (combined with the trailing `exit 0` below) used
-#   to swallow the failure silently, leaving the app with no Okta keys in
-#   `infoDictionary` and `OktaConfig.load()` returning a misleading
-#   "Missing Info.plist key…" diagnostic. PlistBuddy's `Set` upserts when
-#   we fall back to `Add` on the missing-entry branch, so the four keys are
-#   guaranteed to exist after this script runs.
+#   The source Info.plist (AcmeBank/Info.plist) declares API_BASE_URL with a
+#   sentinel default but does NOT pre-declare the four Okta keys. Xcode copies
+#   the source plist to ${TARGET_BUILD_DIR}/${INFOPLIST_PATH} and we Set-or-Add
+#   here. `plutil -replace` exits non-zero when the key is missing — which
+#   (combined with the trailing `exit 0` below) would silently swallow the
+#   failure, leaving the app with no Okta keys in `infoDictionary` and
+#   `OktaConfig.load()` returning a misleading "Missing Info.plist key…"
+#   diagnostic. PlistBuddy's `Set` upserts when we fall back to `Add` on the
+#   missing-entry branch, so every injected key is guaranteed to exist after
+#   this script runs.
 #
 # Build-phase ordering: this is wired as a `postBuildScripts` entry in
 # project.yml, which Xcode runs after the standard build phases (including
@@ -61,8 +62,8 @@ inject() {
         value="${!var_name}"
     fi
     # Upsert: try Set (works when the key already exists); on failure Add it
-    # as a string. This is required because GENERATE_INFOPLIST_FILE: YES
-    # produces a plist that does not pre-declare these keys.
+    # as a string. This is required because the source Info.plist does not
+    # pre-declare the Okta keys.
     "$PLISTBUDDY" -c "Set :$key $value" "$PLIST" 2>/dev/null \
         || "$PLISTBUDDY" -c "Add :$key string $value" "$PLIST"
 }
@@ -71,5 +72,6 @@ inject OktaIssuer      OKTA_ISSUER       "__OKTA_ISSUER_UNSET__"
 inject OktaClientID    OKTA_CLIENT_ID    "__OKTA_CLIENT_ID_UNSET__"
 inject OktaRedirectURI OKTA_REDIRECT_URI "__OKTA_REDIRECT_URI_UNSET__"
 inject OktaScopes      OKTA_SCOPES       "__OKTA_SCOPES_UNSET__"
+inject API_BASE_URL    API_BASE_URL      "__API_BASE_URL_UNSET__"
 
 exit 0

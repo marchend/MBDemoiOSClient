@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  AcmeBank Info.plist
+	  ====================
+
+	  Hand-written because we inject build-time configuration (the four
+	  OktaConfig values plus API_BASE_URL) via PlistBuddy in
+	  Scripts/inject_okta_config.sh. The Okta keys are upserted at build
+	  time (added if missing) so they are deliberately ABSENT from this
+	  source file — see that script for the canonical list.
+
+	  API_BASE_URL is declared here so the develop scheme has a discoverable
+	  default and an obvious "this needs to be set" sentinel in dev builds
+	  that don't export API_BASE_URL. The build script overwrites it with the
+	  real value when the env var is exported.
+	-->
+
+	<key>API_BASE_URL</key>
+	<string>__API_BASE_URL_UNSET__</string>
+
+	<!-- Standard SwiftUI iOS app keys (previously synthesized by
+	     INFOPLIST_KEY_*_Generation when GENERATE_INFOPLIST_FILE was YES). -->
+
+	<key>UILaunchScreen</key>
+	<dict/>
+
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+	</array>
+
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>
