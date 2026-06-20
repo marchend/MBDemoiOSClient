@@ -21,6 +21,32 @@
 	<key>API_BASE_URL</key>
 	<string>__API_BASE_URL_UNSET__</string>
 
+	<!-- Standard CFBundle* keys. Previously synthesized automatically by
+	     GENERATE_INFOPLIST_FILE=YES; now that we ship a hand-written
+	     Info.plist these must be declared explicitly or simulator install
+	     rejects the .app with "missing CFBundleIdentifier". The $(VAR)
+	     references are expanded at build time because
+	     INFOPLIST_EXPAND_BUILD_SETTINGS defaults to YES. -->
+
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleDisplayName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+
 	<!-- Standard SwiftUI iOS app keys (previously synthesized by
 	     INFOPLIST_KEY_*_Generation when GENERATE_INFOPLIST_FILE was YES). -->
 
