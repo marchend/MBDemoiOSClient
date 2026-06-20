@@ -15,7 +15,7 @@ in separate PRs.
 | UI Framework | SwiftUI |
 | Architecture | MVVM + Coordinator (SwiftUI `NavigationStack`) |
 | Auth | Okta OIDC via `okta-mobile-swift` (`OktaDirectAuth`) |
-| Networking | `URLSession` + async/await (deferred) |
+| Networking | `URLSession` + async/await via `APIClient` (Core/Networking, implemented) |
 | Dependency Injection | Constructor injection; no service locator |
 | Project files | XcodeGen (`project.yml`) — never hand-craft `.pbxproj` |
 | Test framework | XCTest (unit) + XCUITest (`AcmeBankUITests` target) |
@@ -43,14 +43,23 @@ xcodebuild test \
   -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
 
-## Okta build configuration
-The four `OKTA_*` shell env vars (`OKTA_ISSUER`, `OKTA_CLIENT_ID`,
-`OKTA_REDIRECT_URI`, `OKTA_SCOPES`) are injected into `Info.plist` at build
-time by `Scripts/inject_okta_config.sh` (a Run Script build phase ordered
-after Copy Bundle Resources) and read at runtime by
-`AcmeBank/Core/Config/OktaConfig.swift`. The build NEVER fails on missing
-vars — the script writes `__OKTA_*_UNSET__` sentinels and `OktaConfig.load()`
-returns `.notConfigured(reason:)`. UI tests additionally read
+## Build-time configuration (Okta + BFF base URL)
+Five shell env vars are bridged into the app's `Info.plist` at build time by
+`Scripts/inject_okta_config.sh` (a Run Script build phase ordered after Copy
+Bundle Resources) and read at runtime by their respective loaders:
+
+| Env var             | Info.plist key    | Runtime loader                                |
+|---------------------|-------------------|-----------------------------------------------|
+| `OKTA_ISSUER`       | `OktaIssuer`      | `AcmeBank/Core/Config/OktaConfig.swift`       |
+| `OKTA_CLIENT_ID`    | `OktaClientID`    | `AcmeBank/Core/Config/OktaConfig.swift`       |
+| `OKTA_REDIRECT_URI` | `OktaRedirectURI` | `AcmeBank/Core/Config/OktaConfig.swift`       |
+| `OKTA_SCOPES`       | `OktaScopes`      | `AcmeBank/Core/Config/OktaConfig.swift`       |
+| `API_BASE_URL`      | `API_BASE_URL`    | `AcmeBank/Core/Networking/APIBaseURLProvider.swift` |
+
+The build NEVER fails on missing vars — the script writes
+`__OKTA_*_UNSET__` / `__API_BASE_URL_UNSET__` sentinels. `OktaConfig.load()`
+returns `.notConfigured(reason:)` and `APIBaseURLProvider.load()` throws
+`APIError.invalidConfiguration` at the first request. UI tests additionally read
 `OKTA_TEST_USERNAME` / `OKTA_TEST_PASSWORD` from `ProcessInfo` in the test
 runner (NOT the app bundle). Full setup recipes + the `PhaseScriptExecution`
 env-var caveat live in [README.md → Okta build configuration](README.md#okta-build-configuration).
@@ -73,8 +82,12 @@ AcmeBank/
 │   │   ├── IDTokenDecoder.swift    # JWT payload decoder (implemented)
 │   │   ├── AuthService.swift       # DirectAuth signIn + refresh-token grant (implemented)
 │   │   └── AuthService+Okta.swift  # OktaDirectAuth adapter for DirectAuthFlow (implemented)
-│   └── Config/
-│       └── OktaConfig.swift # Runtime loader for Info.plist Okta keys
+│   ├── Config/
+│   │   └── OktaConfig.swift # Runtime loader for Info.plist Okta keys
+│   └── Networking/
+│       ├── APIClient.swift           # Protocol + URLSessionAPIClient (implemented)
+│       ├── APIError.swift            # Routing-oriented error enum (implemented)
+│       └── APIBaseURLProvider.swift  # Info.plist API_BASE_URL loader (implemented)
 ├── Theme/
 │   └── AcmeBankTheme.swift  # Brand colors (acmeNavy #1B2A4A) + font helpers
 ├── Features/
@@ -91,6 +104,7 @@ AcmeBank/
 │           └── OpenAccountPlaceholderView.swift  # "Coming soon" stub
 ├── Resources/
 │   └── Assets.xcassets/     # AppIcon stub (implemented)
+├── Info.plist               # Hand-written app plist; build script injects keys
 ├── AcmeBank.entitlements    # Keychain access group boilerplate (implemented)
 └── PrivacyInfo.xcprivacy    # Privacy manifest (implemented)
 AcmeBankTests/
@@ -104,8 +118,11 @@ AcmeBankTests/
 │   │   ├── KeychainStoreTests.swift   # Store/load/clear + data-protection flag
 │   │   ├── IDTokenDecoderTests.swift  # JWT decode happy + rejection paths
 │   │   └── AuthServiceTests.swift     # signIn + refresh with injected fakes
-│   └── Config/
-│       └── OktaConfigTests.swift # Unit tests for OktaConfig.load
+│   ├── Config/
+│   │   └── OktaConfigTests.swift # Unit tests for OktaConfig.load
+│   └── Networking/
+│       ├── APIClientTests.swift     # Status routing + headers + decoding
+│       └── URLProtocolStub.swift    # Reusable URLProtocol stub fixture
 └── Features/
     ├── Landing/
     │   └── LandingViewTests.swift     # Display name + email render contract
@@ -119,7 +136,6 @@ AcmeBankUITests/
 
 # Planned (not yet created — added by feature PRs):
 AcmeBank/
-├── Core/Networking/         # APIClient, APIRouter, APIError, RequestInterceptor (deferred)
 ├── Core/Notifications/      # AppNotification, NotificationPublisher (deferred)
 ├── Core/Extensions/         # Decimal+Currency, Date+Greeting, String+Initials (deferred)
 ├── Domain/Models/           # Account, Transaction, Customer, TransferRequest (deferred)
@@ -216,10 +232,23 @@ AppCoordinator          (implemented — auth-state switcher)
   UI's `catch let e as AuthError` would miss it and show a misleading
   network-error banner even though Okta succeeded.
 
-### Networking *(deferred)*
-`APIClient` wraps `URLSession` with `async/await`; decodes with
-`.convertFromSnakeCase` + `.iso8601`; maps HTTP errors to typed `APIError`.
-Base URL read from `Info.plist` key `API_BASE_URL` (injected by CI xcconfig).
+### Networking (Core/Networking — implemented)
+- `APIClient` protocol: single `get<T: Decodable>(path:bearerToken:decoder:)`
+  entry point. Concrete `URLSessionAPIClient` issues `GET` against
+  `baseURL + path` with `Authorization: Bearer <token>` and
+  `Accept: application/json` headers ALWAYS present.
+- HTTP status routing → `APIError`: 2xx + decodable → returns `T`; 401 →
+  `.unauthorized` (caller signs the user out); 5xx (and non-401 4xx) →
+  `.serverError(Int)`; transport failure → `.networkError(Error)`; body
+  decode failure → `.decodingError(Error)`; missing/empty/sentinel base
+  URL → `.invalidConfiguration`.
+- Base URL is resolved late via an injected `() throws -> URL` closure
+  (default: `APIBaseURLProvider.load`) so misconfiguration surfaces at the
+  first request, not at startup.
+- `URLSession` is injected so tests use `URLProtocolStub` (`AcmeBankTests/Core/Networking/URLProtocolStub.swift`)
+  — no live network in CI.
+- Feature repositories (e.g. `BFFHomeRepository`) compose `APIClient`;
+  the client itself ships zero feature-specific endpoints.
 
 ### Internal notifications *(deferred)*
 `NotificationCenter` with typed `AppNotification` names. Subscribe only in
@@ -233,7 +262,7 @@ coordinators/root views — never inside a ViewModel.
 - LoginCoordinator (NavigationPath) — future PR
 - Home Dashboard feature (BFF `GET /v1/home`, `HomeDashboard` model) — future PR
 - Accounts, Transfer, Cards features — future PRs
-- Networking layer (APIClient / APIRouter / APIError / RequestInterceptor) — future PR
+- `APIRouter` / `RequestInterceptor` (feature-side networking extensions) — future PRs
 - Domain models (Account, Transaction, Customer, TransferRequest) — future PR
 - Repository protocols + remote + mock implementations — future PRs
 - Internal notification system (AppNotification, NotificationPublisher) — future PR

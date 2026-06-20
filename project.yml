@@ -25,9 +25,13 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.acmebank.mobile
         SWIFT_VERSION: "5.10"
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        # Switched OFF the synthesized Info.plist: we now ship a handwritten
+        # AcmeBank/Info.plist so the build-time PlistBuddy injection script
+        # has a stable source plist to upsert keys into (API_BASE_URL and
+        # the four Okta keys). The launch-screen / scene-manifest keys that
+        # GENERATE_INFOPLIST_FILE used to synthesize are baked into the
+        # handwritten Info.plist directly.
+        INFOPLIST_FILE: AcmeBank/Info.plist
         CODE_SIGNING_ALLOWED: "NO"
         CODE_SIGNING_REQUIRED: "NO"
         ENABLE_USER_SCRIPT_SANDBOXING: "NO"

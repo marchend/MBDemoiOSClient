@@ -33,11 +33,13 @@ xcodebuild test \
 
 ## Okta build configuration
 
-The app reads its Okta OIDC configuration from `Info.plist` at runtime via
-`OktaConfig.load()`. Those `Info.plist` values are **injected at build time**
-by `Scripts/inject_okta_config.sh` (an Xcode Run Script build phase, ordered
-after Copy Bundle Resources) which reads four shell environment variables and
-writes either the real value or a recognisable `__OKTA_*_UNSET__` sentinel.
+The app reads its Okta OIDC configuration AND the BFF base URL from
+`Info.plist` at runtime via `OktaConfig.load()` and
+`APIBaseURLProvider.load()` respectively. Those `Info.plist` values are
+**injected at build time** by `Scripts/inject_okta_config.sh` (an Xcode Run
+Script build phase, ordered after Copy Bundle Resources) which reads five
+shell environment variables and writes either the real value or a
+recognisable `__*_UNSET__` sentinel.
 
 ### Required environment variables
 
@@ -47,11 +49,13 @@ writes either the real value or a recognisable `__OKTA_*_UNSET__` sentinel.
 | `OKTA_CLIENT_ID`    | `OktaClientID`    | `0oa1234567890abcdef`                         |
 | `OKTA_REDIRECT_URI` | `OktaRedirectURI` | `com.acmebank.mobile:/callback`               |
 | `OKTA_SCOPES`       | `OktaScopes`      | `openid profile offline_access`               |
+| `API_BASE_URL`      | `API_BASE_URL`    | `https://bff.acmebank.com/`                   |
 
 The build does NOT fail when these vars are unset — the script writes
-sentinel strings instead, and `OktaConfig.load()` returns
-`.notConfigured(reason:)` at runtime. CI gates against the sentinels
-separately.
+sentinel strings instead. At runtime, `OktaConfig.load()` returns
+`.notConfigured(reason:)` and `APIBaseURLProvider.load()` throws
+`APIError.invalidConfiguration` at the first request. CI gates against the
+sentinels separately.
 
 ### Three ways to make Xcode see the vars
 
@@ -68,6 +72,7 @@ launchctl setenv OKTA_ISSUER       'https://acme.okta.com/oauth2/default'
 launchctl setenv OKTA_CLIENT_ID    '0oa1234567890abcdef'
 launchctl setenv OKTA_REDIRECT_URI 'com.acmebank.mobile:/callback'
 launchctl setenv OKTA_SCOPES       'openid profile offline_access'
+launchctl setenv API_BASE_URL      'https://bff.acmebank.com/'
 ```
 
 **2. Shell-launched Xcode (`~/.zshrc` + `xed .`):** export the vars in
@@ -79,6 +84,7 @@ export OKTA_ISSUER='https://acme.okta.com/oauth2/default'
 export OKTA_CLIENT_ID='0oa1234567890abcdef'
 export OKTA_REDIRECT_URI='com.acmebank.mobile:/callback'
 export OKTA_SCOPES='openid profile offline_access'
+export API_BASE_URL='https://bff.acmebank.com/'
 
 # then, in a fresh shell:
 xed .
@@ -93,6 +99,7 @@ export OKTA_ISSUER='...'
 export OKTA_CLIENT_ID='...'
 export OKTA_REDIRECT_URI='...'
 export OKTA_SCOPES='...'
+export API_BASE_URL='...'
 xcodebuild build -scheme AcmeBank -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
 
@@ -113,14 +120,15 @@ tenant. It reads two additional env vars from `ProcessInfo` at test time:
 | `OKTA_TEST_USERNAME`  | Test-account username to type in     |
 | `OKTA_TEST_PASSWORD`  | Test-account password to type in     |
 
-Run from the terminal (with all six env vars exported — the four build
-vars from above PLUS the two test vars):
+Run from the terminal (with all build vars exported — the five from
+above PLUS the two test vars):
 
 ```bash
 export OKTA_ISSUER='...'
 export OKTA_CLIENT_ID='...'
 export OKTA_REDIRECT_URI='...'
 export OKTA_SCOPES='...'
+export API_BASE_URL='...'
 export OKTA_TEST_USERNAME='test.user@example.com'
 export OKTA_TEST_PASSWORD='...'
 
@@ -145,7 +153,7 @@ xcodegen generate
 - **UI:** SwiftUI (`@main` App + `WindowGroup`)
 - **Architecture:** MVVM + Coordinator (SwiftUI `NavigationStack`) — wired in upcoming PRs
 - **Auth:** Okta OIDC (`okta-mobile-swift`) — upcoming PR
-- **Networking:** `URLSession` + async/await — upcoming PR
+- **Networking:** `URLSession` + async/await via `APIClient` (Core/Networking, implemented)
 - **Tests:** XCTest (unit) · XCUITest (UI, upcoming PR)
 - **Lint:** SwiftLint — upcoming PR
 
